@@ -14,10 +14,11 @@ def index_contents(contents, INDEX):
             {
                 "_index": INDEX,
                 "_source": content,
+                "_id": content.get("id"),
             } for content in contents
         ]
         helpers.bulk(es, actions)
-        print(f"succesfully persist {len(contents)} docs")
+        print(f"succesfully indexed {len(contents)}")
     except Exception as e:
         print("Some hicups", e)
 
