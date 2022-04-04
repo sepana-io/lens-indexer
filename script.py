@@ -2,6 +2,8 @@ from datetime import datetime
 import requests
 from es_util import ElasticClient
 from elasticsearch import helpers
+import string
+import json
 
 es = ElasticClient()
 
@@ -268,3 +270,454 @@ def index_posts():
                 new_posts.append(map_post_2(post))
         print(f"indexing {len(new_posts)} posts")
         index_contents(new_posts, "lens-final-posts-data")
+
+def get_profiles_from_lens(q, offset = 0):
+    query = f"""
+        query Search {{
+          search(request: {{
+            query: \"{q}\",
+            type: PROFILE,
+            limit: 50,
+            cursor: "{{\\"offset\\":{offset}}}"
+          }}) {{
+            ... on ProfileSearchResult {{
+              __typename 
+              items {{
+                ... on Profile {{
+                  ...ProfileFields
+                }}
+              }}
+              pageInfo {{
+                prev
+                totalCount
+                next
+              }}
+            }}
+          }}
+        }}
+
+        fragment MediaFields on Media {{
+          url
+          mimeType
+        }}
+
+        fragment ProfileFields on Profile {{
+          profileId: id,
+          name
+          bio
+          location
+          website
+          twitterUrl
+          handle
+          picture {{
+            ... on NftImage {{
+              contractAddress
+              tokenId
+              uri
+              verified
+            }}
+            ... on MediaSet {{
+              original {{
+                ...MediaFields
+              }}
+            }}
+          }}
+          coverPicture {{
+            ... on NftImage {{
+              contractAddress
+              tokenId
+              uri
+              verified
+            }}
+            ... on MediaSet {{
+              original {{
+                ...MediaFields
+              }}
+            }}
+          }}
+          ownedBy
+          depatcher {{
+            address
+          }}
+          stats {{
+            totalFollowers
+            totalFollowing
+            totalPosts
+            totalComments
+            totalMirrors
+            totalPublications
+            totalCollects
+          }}
+          followModule {{
+            ... on FeeFollowModuleSettings {{
+              type
+              amount {{
+                asset {{
+                  name
+                  symbol
+                  decimals
+                  address
+                }}
+                value
+              }}
+              recipient
+            }}
+          }}
+        }}
+    """
+    try:
+        data = requests.post("https://api-mumbai.lens.dev/playground", json={"query":query}).json()
+        return data.get("data", {}).get("search", {})
+    except Exception as e:
+        print(e)
+    return {}
+
+def index_profiles():
+    for c in string.ascii_lowercase:
+        print("quering ::: ", c)
+        offset = 0
+        search_res = get_profiles_from_lens(c, offset)
+        while search_res.get("items"):
+            profiles = search_res.get("items")
+            pageInfo = search_res.get("pageInfo")
+            offset = json.loads(pageInfo.get("next", {})).get("offset", 100000)
+            contents = []
+            for profile in profiles:
+                profile["id"] = profile.get("profileId", profile.get("id"))
+                contents.append(profile)
+            index_contents(contents, "lens-final-profiles-data")
+            search_res = get_profiles_from_lens(c, offset)
+        
+def get_profile_ids():
+    q = {
+      "aggs": {
+        "ids": {
+          "terms": {
+            "field": "id.keyword",
+            "size": 10000
+          }
+        }
+      },"size": 0
+    }
+    res = es.search(index="lens-final-profiles-data", body=q)
+    return res.get("aggregations", {}).get("ids", {}).get("buckets", [])
+        
+        
+def get_posts_by_profile_from_lens(profileId, next_cursor = ""):
+    query = f"""
+        query Publications {{
+          publications(request: {{
+            profileId: \"{profileId}\",
+            publicationTypes: [POST, COMMENT, MIRROR],
+            limit: 50,
+            cursor: \"{next_cursor}\"
+          }}) {{
+            items {{
+              __typename 
+              ... on Post {{
+                ...PostFields
+              }}
+              ... on Comment {{
+                ...CommentFields
+              }}
+              ... on Mirror {{
+                ...MirrorFields
+              }}
+            }}
+            pageInfo {{
+              prev
+              next
+              totalCount
+            }}
+          }}
+        }}
+
+        fragment MediaFields on Media {{
+          url
+          mimeType
+        }}
+
+        fragment ProfileFields on Profile {{
+          id
+          name
+          bio
+          location
+          website
+          twitterUrl
+          handle
+          picture {{
+            ... on NftImage {{
+              contractAddress
+              tokenId
+              uri
+              verified
+            }}
+            ... on MediaSet {{
+              original {{
+                ...MediaFields
+              }}
+            }}
+          }}
+          coverPicture {{
+            ... on NftImage {{
+              contractAddress
+              tokenId
+              uri
+              verified
+            }}
+            ... on MediaSet {{
+              original {{
+                ...MediaFields
+              }}
+            }}
+          }}
+          ownedBy
+          depatcher {{
+            address
+          }}
+          stats {{
+            totalFollowers
+            totalFollowing
+            totalPosts
+            totalComments
+            totalMirrors
+            totalPublications
+            totalCollects
+          }}
+          followModule {{
+            ... on FeeFollowModuleSettings {{
+              type
+              amount {{
+                asset {{
+                  name
+                  symbol
+                  decimals
+                  address
+                }}
+                value
+              }}
+              recipient
+            }}
+          }}
+        }}
+
+        fragment PublicationStatsFields on PublicationStats {{ 
+          totalAmountOfMirrors
+          totalAmountOfCollects
+          totalAmountOfComments
+        }}
+
+        fragment MetadataOutputFields on MetadataOutput {{
+          name
+          description
+          content
+          media {{
+            original {{
+              ...MediaFields
+            }}
+          }}
+          attributes {{
+            displayType
+            traitType
+            value
+          }}
+        }}
+
+        fragment Erc20Fields on Erc20 {{
+          name
+          symbol
+          decimals
+          address
+        }}
+
+        fragment CollectModuleFields on CollectModule {{
+          __typename
+          ... on EmptyCollectModuleSettings {{
+            type
+          }}
+          ... on FeeCollectModuleSettings {{
+            type
+            amount {{
+              asset {{
+                ...Erc20Fields
+              }}
+              value
+            }}
+            recipient
+            referralFee
+          }}
+          ... on LimitedFeeCollectModuleSettings {{
+            type
+            collectLimit
+            amount {{
+              asset {{
+                ...Erc20Fields
+              }}
+              value
+            }}
+            recipient
+            referralFee
+          }}
+          ... on LimitedTimedFeeCollectModuleSettings {{
+            type
+            collectLimit
+            amount {{
+              asset {{
+                ...Erc20Fields
+              }}
+              value
+            }}
+            recipient
+            referralFee
+            endTimestamp
+          }}
+          ... on RevertCollectModuleSettings {{
+            type
+          }}
+          ... on TimedFeeCollectModuleSettings {{
+            type
+            amount {{
+              asset {{
+                ...Erc20Fields
+              }}
+              value
+            }}
+            recipient
+            referralFee
+            endTimestamp
+          }}
+        }}
+
+        fragment PostFields on Post {{
+          id
+          profile {{
+            ...ProfileFields
+          }}
+          stats {{
+            ...PublicationStatsFields
+          }}
+          metadata {{
+            ...MetadataOutputFields
+          }}
+          createdAt
+          collectModule {{
+            ...CollectModuleFields
+          }}
+          referenceModule {{
+            ... on FollowOnlyReferenceModuleSettings {{
+              type
+            }}
+          }}
+          appId
+        }}
+
+        fragment MirrorBaseFields on Mirror {{
+          id
+          profile {{
+            ...ProfileFields
+          }}
+          stats {{
+            ...PublicationStatsFields
+          }}
+          metadata {{
+            ...MetadataOutputFields
+          }}
+          createdAt
+          collectModule {{
+            ...CollectModuleFields
+          }}
+          referenceModule {{
+            ... on FollowOnlyReferenceModuleSettings {{
+              type
+            }}
+          }}
+          appId
+        }}
+
+        fragment MirrorFields on Mirror {{
+          ...MirrorBaseFields
+          mirrorOf {{
+           ... on Post {{
+              ...PostFields          
+           }}
+           ... on Comment {{
+              ...CommentFields          
+           }}
+          }}
+        }}
+
+        fragment CommentBaseFields on Comment {{
+          id
+          profile {{
+            ...ProfileFields
+          }}
+          stats {{
+            ...PublicationStatsFields
+          }}
+          metadata {{
+            ...MetadataOutputFields
+          }}
+          createdAt
+          collectModule {{
+            ...CollectModuleFields
+          }}
+          referenceModule {{
+            ... on FollowOnlyReferenceModuleSettings {{
+              type
+            }}
+          }}
+          appId
+        }}
+
+        fragment CommentFields on Comment {{
+          ...CommentBaseFields
+          mainPost {{
+            ... on Post {{
+              ...PostFields
+            }}
+            ... on Mirror {{
+              ...MirrorBaseFields
+              mirrorOf {{
+                ... on Post {{
+                   ...PostFields          
+                }}
+                ... on Comment {{
+                   ...CommentMirrorOfFields        
+                }}
+              }}
+            }}
+          }}
+        }}
+
+        fragment CommentMirrorOfFields on Comment {{
+          ...CommentBaseFields
+          mainPost {{
+            ... on Post {{
+              ...PostFields
+            }}
+            ... on Mirror {{
+               ...MirrorBaseFields
+            }}
+          }}
+        }}
+    """
+    try:
+        data = requests.post("https://api-mumbai.lens.dev/playground", json={"query":query}).json()
+        return data.get("data", {}).get("publications", {})
+    except Exception as e:
+        print(e)
+    return {}
+
+
+def index_posts_from_lens():
+    profiles_ids = get_profile_ids()
+    for profile in profiles_ids:
+        print("Searching ", profile)
+        next_cursor = "{\\\"entityIdentifier\\\":\\\"\\\"}"
+        search_res = get_posts_by_profile_from_lens(profile, next_cursor)
+        while search_res.get("items"):
+            posts = search_res.get("items")
+            pageInfo = search_res.get("pageInfo")
+            next_cursor = pageInfo.get("next", "")
+            index_contents(posts, "lens-final-posts")
+            search_res = get_posts_by_profile_from_lens(profile, next_cursor)
