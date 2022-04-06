@@ -1,0 +1,13 @@
+[[source]]
+url = "https://pypi.org/simple"
+verify_ssl = true
+name = "pypi"
+
+[packages]
+python-json-logger = "*"
+requests = "*"
+elasticsearch = "==7.14.0"
+
+[dev-packages]
+
+[requires]

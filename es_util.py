@@ -1,3 +1,4 @@
+import os
 from elasticsearch import Elasticsearch
 import ssl
 
@@ -9,5 +10,4 @@ class ElasticClient(Elasticsearch):
         context = ssl.create_default_context()
         context.check_hostname = False
         context.verify_mode = ssl.CERT_NONE
-        self.cnt = 0
         super().__init__(hosts=hosts, api_key=("xxxxxx_api_id", "xxxx_api_key"), ssl_context=context,  timeout=360)

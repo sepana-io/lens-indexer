@@ -401,7 +401,8 @@ def get_profile_ids():
       },"size": 0
     }
     res = es.search(index="lens-final-profiles-data", body=q)
-    return res.get("aggregations", {}).get("ids", {}).get("buckets", [])
+    profiles = res.get("aggregations", {}).get("ids", {}).get("buckets", [])
+    return [profile["key"] for profile in profiles]
         
         
 def get_posts_by_profile_from_lens(profileId, next_cursor = ""):
